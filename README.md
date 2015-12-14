@@ -1,3 +1,4 @@
+Use our code to save yourself time on cross-platform, cross-device and cross OS version development and testing
 # ios_module_Coupons
 Coupons widget is intended to display a list of coupons provided by mobile application owner. When choosing an interest coupon in the list the detailed page will be opened.
 
