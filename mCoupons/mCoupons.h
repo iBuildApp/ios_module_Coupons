@@ -18,7 +18,10 @@
 /**
  *  Main module class for widget Coupons. Module entry point.
  */
-@interface mCouponsViewController : UIViewController <UITableViewDataSource,
+
+// NSXMLParserDelegate is added because of TBXML can't parse some "invalid" xmls
+@interface mCouponsViewController : UIViewController <NSXMLParserDelegate,
+                                                      UITableViewDataSource,
                                                       UITableViewDelegate,
                                                       IURLLoaderDelegate>
 {

@@ -13,7 +13,7 @@
 #import "functionLibrary.h"
 #import "TBXML+HTTP.h"
 #import "mWebVC.h"
-#import "Reachability.h"
+#import "reachability.h"
 #import "NSURL+RootDomain.h"
 #import "UIColor+HSL.h"
 #import "NSString+size.h"
@@ -28,6 +28,9 @@
 
 @property (nonatomic, strong) TDownloadIndicator *downloadIndicator;
 @property (nonatomic, strong) UITableView *tblView;
+
+// Buffer for current element
+@property (nonatomic, strong) NSMutableString *currentElement;
 @end
 
 @implementation mCouponsViewController
@@ -40,7 +43,8 @@ titleColor,
 backgroundColor,
 RSSPath,
 tblView,
-downloadIndicator;
+downloadIndicator,
+currentElement = _currentElement;
 
 #pragma mark - XML <data> parser
 
@@ -56,7 +60,7 @@ downloadIndicator;
   TBXMLElement element;
   [xmlElement_ getValue:&element];
 
-  NSMutableArray *contentArray = [[[NSMutableArray alloc] init] autorelease];
+  NSMutableArray *contentArray = [[NSMutableArray alloc] init];
 
   NSString *szTitle = @"";
   TBXMLElement *titleElement = [TBXML childElementNamed:@"title" parentElement:&element];
@@ -64,7 +68,7 @@ downloadIndicator;
     szTitle = [TBXML textForElement:titleElement];
   
   
-  NSMutableDictionary *contentDict = [[[NSMutableDictionary alloc] init] autorelease];
+  NSMutableDictionary *contentDict = [[NSMutableDictionary alloc] init];
   [contentDict setObject:(szTitle ? szTitle : @"") forKey:@"title"];
   
     // search for tag <colorskin>
@@ -103,39 +107,42 @@ downloadIndicator;
     {
         // search for tags title, indextext, date, url, description
       NSMutableDictionary *objDictionary = [[NSMutableDictionary alloc] init];
-      
-        // define accessory structure
-      typedef struct tagTTagsForDictionary
-      {
-        const NSString *tagName;
-        const NSString *keyName;
-      }TTagsForDictionary;
-      
-      const TTagsForDictionary parsedTags[] = { { @"title"      , @"title"       },
-        { @"description", @"description" },
-        { @"url"        , @"url"         },
-        { @"html"       , @"html"        } };
+
       TBXMLElement *tagElement = itemElement->firstChild;
       while( tagElement )
       {
         NSString *szTag = [[TBXML elementName:tagElement] lowercaseString];
 
-        for ( int i = 0; i < sizeof(parsedTags) / sizeof(parsedTags[0]); ++i )
+        if ( [szTag isEqual:@"title"] )
         {
-          if ( [szTag isEqual:parsedTags[i].tagName] )
-          {
-            NSString *tagContent = [TBXML textForElement:tagElement];
-            if ( [tagContent length] )
-              [objDictionary setObject:tagContent forKey:parsedTags[i].keyName];
-            break;
-          }
+          NSString *tagContent = [TBXML textForElement:tagElement];
+          if ( [tagContent length] )
+            [objDictionary setObject:tagContent forKey:@"title"];
         }
+        else if ( [szTag isEqual:@"description"] )
+        {
+          NSString *tagContent = [TBXML textForElement:tagElement];
+          if ( [tagContent length] )
+            [objDictionary setObject:tagContent forKey:@"description"];
+        }
+        else if ( [szTag isEqual:@"url"] )
+        {
+          NSString *tagContent = [TBXML textForElement:tagElement];
+          if ( [tagContent length] )
+            [objDictionary setObject:tagContent forKey:@"url"];
+        }
+        else if ( [szTag isEqual:@"html"] )
+        {
+          NSString *tagContent = [TBXML textForElement:tagElement];
+          if ( [tagContent length] )
+            [objDictionary setObject:tagContent forKey:@"html"];
+        }
+
         tagElement = tagElement->nextSibling;
       }
       
       if ( [objDictionary count] )
         [contentArray addObject:objDictionary];
-      [objDictionary release];
       
       itemElement = [TBXML nextSiblingNamed:@"item" searchFromElement:itemElement];
     }
@@ -144,53 +151,196 @@ downloadIndicator;
   [params_ setObject:contentArray forKey:@"data"];
 }
 
+#pragma mark - Parsing
 
-- (void)traverseElement:(TBXMLElement *)element
+- (void)parseXMLWithData:(NSData *)data
 {
-  NSMutableDictionary *tmp = [[[NSMutableDictionary alloc] init] autorelease];
-  do
-  {
-    NSString *elementName = [TBXML elementName:element];
-    NSString *url = nil;
-
-    if ([elementName isEqualToString:@"item" ] || [elementName isEqualToString:@"entry"])
-    {
-      if ([TBXML childElementNamed:@"title" parentElement:element])
-        [tmp setValue:[[TBXML textForElement:[TBXML childElementNamed:@"title" parentElement:element]] stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]]forKey:@"title"];
-      
-      TBXMLElement *descr = [TBXML childElementNamed:@"description" parentElement:element];
-      if (descr)
-      {
-        [tmp setValue:[functionLibrary stringByReplaceEntitiesInString:[TBXML textForElement:[TBXML childElementNamed:@"description" parentElement:element]]] forKey:@"description"];
-        
-        TBXMLElement *descr = [TBXML childElementNamed:@"description" parentElement:element];
-        
-        url = [functionLibrary stringByReplaceEntitiesInString:getAttribFromText([TBXML textForElement:descr], @"src=")];
-        
-        [tmp setValue:url forKey:@"imgURL"];
-      }
-      
-      if ([TBXML childElementNamed:@"content" parentElement:element])
-        [tmp setValue:[TBXML textForElement:[TBXML childElementNamed:@"content" parentElement:element]] forKey:@"content"];
-      
-      if ([TBXML childElementNamed:@"summary" parentElement:element])
-        [tmp setValue:[TBXML textForElement:[TBXML childElementNamed:@"summary" parentElement:element]] forKey:@"summary"];
-      
-      if ([TBXML childElementNamed:@"link" parentElement:element])
-        [tmp setValue:[TBXML textForElement:[TBXML childElementNamed:@"link" parentElement:element]] forKey:@"link"];
-      
-      [arr addObject:[[tmp copy] autorelease]];
-      [tmp removeAllObjects];
-    }
-    
-    if (element->firstChild)
-      [self traverseElement:element->firstChild];
-    
-  } while ((element = element->nextSibling));
+  [arr removeAllObjects];
+  //you must then convert the path to a proper NSURL or it won't work
+  NSXMLParser *rssParser = [[NSXMLParser alloc] initWithData:data];
   
+  // Set self as the delegate of the parser so that it will receive the parser delegate methods callbacks.
+  [rssParser setDelegate:self];
+  
+  // Depending on the XML document you're parsing, you may want to enable these features of NSXMLParser.
+  [rssParser setShouldProcessNamespaces:NO];
+  [rssParser setShouldReportNamespacePrefixes:NO];
+  [rssParser setShouldResolveExternalEntities:NO];
+  if ([rssParser parse])
+  {
+    NSLog(@"... Start parsing ...");
+  }
+  else
+  {
+    NSLog(@"Parsing Error: %@", rssParser.parserError);
+  }
 }
 
+- (void)parser:(NSXMLParser *)parser didStartElement:(NSString *)elementName
+  namespaceURI:(NSString *)namespaceURI
+ qualifiedName:(NSString *)qName
+    attributes:(NSDictionary *)attributeDict
+{
+  self.currentElement = [elementName mutableCopy];
+  if ([elementName isEqualToString:@"item"] || [elementName isEqualToString:@"entry"])
+  {
+    [arr addObject:[NSMutableDictionary dictionary]];
+  }
+  else if ([elementName isEqualToString:@"link"])
+  {
+    NSMutableString *link=[[attributeDict objectForKey:@"href"] mutableCopy];
+    if (link&&
+        !([[arr lastObject] objectForKey:@"link"]&&[attributeDict objectForKey:@"rel"]&&[[attributeDict objectForKey:@"rel"] isEqualToString:@"image"])) //to avoid situations where link replaces with next image link
+      [[arr lastObject] setObject:link forKey:@"link"];
+    
+    if ([attributeDict objectForKey:@"rel"]&&[[attributeDict objectForKey:@"rel"] isEqualToString:@"image"])
+      [[arr lastObject] setObject:link forKey:@"url"];
+    
+  }
+}
 
+- (void)parser:(NSXMLParser *)parser didEndElement:(NSString *)elementName namespaceURI:(NSString *)namespaceURI qualifiedName:(NSString *)qName{
+  
+  if ([elementName isEqualToString:@"item"] || [elementName isEqualToString:@"entry"])
+  {
+    NSString *title1 =[[arr lastObject] objectForKey:@"title"];
+    if (title1)
+    {
+      [[arr lastObject] setObject:[title1 stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]] forKey:@"title"];
+    }
+    
+    NSString *description = [[arr lastObject] objectForKey:@"description"];
+    if (description)
+    {
+      NSString *updatedDescription =[functionLibrary stringByReplaceEntitiesInString:description];
+      [[arr lastObject] setObject:updatedDescription forKey:@"description"];
+    }
+    
+    NSString *url=[mCouponsViewController getAttribFromText:[[arr lastObject] objectForKey:@"description"] WithAttr:@"src="];
+    if (url)
+    {
+      [[arr lastObject] setObject:url forKey:@"url"];
+      
+      NSString *imgUrl = [functionLibrary stringByReplaceEntitiesInString:url];
+      [[arr lastObject] setObject:imgUrl forKey:@"imgURL"];
+    }
+  }
+}
+
+- (void)parser:(NSXMLParser *)parser foundCharacters:(NSString *)string{
+  
+  // save the characters for the current item...
+  if ([self.currentElement isEqualToString:@"title"])
+  {
+    NSMutableString *title1 = [[arr lastObject] objectForKey:@"title"];
+    if (title1)
+    {
+      [title1 appendString:string];
+      [[arr lastObject] setObject:title1 forKey:@"title"];
+    }
+    else [[arr lastObject] setObject:[string mutableCopy] forKey:@"title"];
+    
+  }
+  else if ([self.currentElement isEqualToString:@"content"])
+  {
+    NSMutableString *description=[[arr lastObject] objectForKey:@"description"];
+    if (description)
+    {
+      [description appendString:string];
+      [[arr lastObject] setObject:description forKey:@"description"];
+    }
+    else
+      [[arr lastObject] setObject:[string mutableCopy] forKey:@"description"];
+  }
+  else if ([self.currentElement isEqualToString:@"description"])
+  {
+    if ([[arr lastObject] objectForKey:@"description"])
+    {
+      NSMutableString *tmpString = [[NSMutableString alloc] initWithString:string];
+      NSMutableString *tmpDescription = [[NSMutableString alloc] initWithString:[[arr lastObject] objectForKey:@"description"]];
+      [tmpDescription appendString:tmpString];
+      
+      NSRange tmpRange;
+      tmpRange.location = 0;
+      tmpRange.length = tmpString.length;
+      [tmpDescription replaceOccurrencesOfString:@"&nbsp;" withString:@"" options:NSCaseInsensitiveSearch range:tmpRange];
+      
+      [[arr lastObject] setObject:tmpDescription forKey:@"description"];
+      
+      tmpDescription = nil;
+      
+      tmpString = nil;
+    }
+    else
+      [[arr lastObject] setObject:[string mutableCopy] forKey:@"description"];
+  }
+  else if ([self.currentElement isEqualToString:@"summary"])
+  {
+    NSMutableString *description=[[arr lastObject] objectForKey:@"description"];
+    if (description)
+    {
+      [description appendString:string];
+      [[arr lastObject] setObject:description forKey:@"description"];
+    }
+    else
+      [[arr lastObject] setObject:[string mutableCopy] forKey:@"description"];
+  }
+  else if ([self.currentElement isEqualToString:@"link"])
+  {
+    NSMutableString *link=[[arr lastObject] objectForKey:@"link"];
+    if (link)
+    {
+      [link appendString:string];
+      [[arr lastObject] setObject:link forKey:@"link"];
+    }
+    else
+      [[arr lastObject] setObject:[string mutableCopy] forKey:@"link"];
+    
+  }
+}
+
+- (void)parser:(NSXMLParser *)parser validationErrorOccurred:(NSError *)parseError
+{
+  [parser abortParsing];
+}
+
+- (void)parserDidEndDocument:(NSXMLParser *)parser
+{
+  [self.tblView setSeparatorStyle:UITableViewCellSeparatorStyleSingleLine];
+  [self.tblView reloadData];
+}
+
+- (void)parser:(NSXMLParser *)parser parseErrorOccurred:(NSError *)parseError
+{
+  [parser abortParsing];
+}
+
++ (NSString*)getAttribFromText:(NSString*)text WithAttr:(NSString*)attrib
+{
+  NSString *res=nil;
+  NSRange pos=[text rangeOfString:attrib];
+  if (pos.location!=NSNotFound)
+  {
+    NSRange separator_pos;
+    separator_pos.location = pos.location+pos.length;
+    separator_pos.length = 1;
+    NSString *separator = [text substringWithRange:separator_pos];
+    
+    if (![separator isEqualToString:@"\""]&&![separator isEqualToString:@"\'"])
+    {
+      separator = @" ";
+    }
+    
+    NSRange content;
+    content.location=pos.location+pos.length;
+    
+    NSRange space=[text rangeOfString:separator options:NSCaseInsensitiveSearch range:NSMakeRange(pos.location+pos.length+1, [text length]-pos.location-pos.length-1)];
+    if (space.location==NSNotFound) space.location=[text length];
+    content.length=space.location-pos.location-[attrib length];
+    res=[[text substringWithRange:content] stringByTrimmingCharactersInSet:[NSCharacterSet characterSetWithCharactersInString:@"\'\""]];
+  }
+  return res;
+}
 
 #pragma mark -
 
@@ -206,20 +356,16 @@ downloadIndicator;
     self.RSSPath  = nil;
     self.tblView  = nil;
     self.downloadIndicator = nil;
+    
+    self.currentElement  = nil;
   }
   return self;
 }
 
 - (void)dealloc
 {
-  self.RSSPath      = nil;
-  self.backgroundColor = nil;
-  self.titleColor = nil;
-  self.txtColor = nil;
-  self.tblView      = nil;
   [self.downloadIndicator removeFromSuperview];
-  self.downloadIndicator = nil;
-  [super dealloc];
+  
 }
 
 - (void)setParams:(NSMutableDictionary *)inputParams
@@ -279,23 +425,23 @@ downloadIndicator;
 {
   [self.navigationItem setHidesBackButton:NO animated:NO];
   [self.navigationController setNavigationBarHidden:NO animated:YES];
-  [[self.tabBarController tabBar] setHidden:NO];
+  [[self.tabBarController tabBar] setHidden:YES];
   
-  self.tblView = [[[UITableView alloc] initWithFrame:self.view.frame
-                                               style:UITableViewStylePlain] autorelease];
+  self.tblView = [[UITableView alloc] initWithFrame:self.view.frame
+                                               style:UITableViewStylePlain];
   self.tblView.autoresizesSubviews = YES;
   self.tblView.autoresizingMask    = UIViewAutoresizingFlexibleHeight | UIViewAutoresizingFlexibleWidth;
   [self.tblView setDelegate:self];
   [self.tblView setDataSource:self];
   self.tblView.backgroundView = nil;
   self.tblView.backgroundColor = self.backgroundColor;
-#ifdef __IPHONE_7_0
+if ([[[UIDevice currentDevice] systemVersion] compare:@"7.0" options:NSNumericSearch] != NSOrderedAscending) {
   if ([self.tblView respondsToSelector:@selector(setSeparatorInset:)])
     [self.tblView setSeparatorInset:UIEdgeInsetsZero];
   
   if ([self.tblView respondsToSelector:@selector(setLayoutMargins:)])
     [self.tblView setLayoutMargins:UIEdgeInsetsZero];
-#endif
+}
   self.view = self.tblView;
   
     // load data by rss link (if link exists)
@@ -321,7 +467,7 @@ downloadIndicator;
     
       // show download indicator
     [self.downloadIndicator removeFromSuperview];
-    self.downloadIndicator = [[[TDownloadIndicator alloc] initWithFrame:self.view.bounds] autorelease];
+    self.downloadIndicator = [[TDownloadIndicator alloc] initWithFrame:self.view.bounds];
     [self.downloadIndicator createViews];
     
     [self.view addSubview:self.downloadIndicator];
@@ -334,9 +480,9 @@ downloadIndicator;
     [self.downloadIndicator startLockViewAnimating:YES];
     
       // load async
-    TURLLoader *loader = [[[TURLLoader alloc] initWithURL:self.RSSPath
+    TURLLoader *loader = [[TURLLoader alloc] initWithURL:self.RSSPath
                                               cachePolicy:NSURLRequestReturnCacheDataElseLoad
-                                          timeoutInterval:30.f] autorelease];
+                                          timeoutInterval:30.f];
     TURLLoader *pOldLoader = [[TDownloadManager instance] appendTarget:loader];
     if ( pOldLoader != loader )
     {
@@ -364,13 +510,11 @@ downloadIndicator;
       [tmp setValue:[currentElement objectForKey:@"description_text"] forKey:@"description_text"];
       [tmp setValue:[currentElement objectForKey:@"title"]            forKey:@"title"];
       [tmp setValue:[currentElement objectForKey:@"url"]              forKey:@"url"];
-      [tmpContent addObject:[[tmp copy] autorelease]];
+      [tmpContent addObject:[tmp copy]];
       [tmp removeAllObjects];
     }
     [arr removeAllObjects];
     arr = [tmpContent mutableCopy];
-    [tmpContent release];
-    [tmp release];
   }
   [[UIApplication sharedApplication] setNetworkActivityIndicatorVisible:NO];
   [super viewDidLoad];
@@ -504,7 +648,7 @@ downloadIndicator;
   if ([currentElement objectForKey:@"expires"] != NULL)
     lblTempDate.text=[NSString stringWithFormat:NSLocalizedString(@"mC_expDateString", @"Exp.date %@"),[currentElement objectForKey:@"expires"]];
   
-  cell.accessoryView = [[[UIImageView alloc] initWithImage:[UIImage imageNamed:([self.backgroundColor isLight] ? @"mContacts_ArrowLight.png" : @"mContacts_Arrow.png")]] autorelease];
+  cell.accessoryView = [[UIImageView alloc] initWithImage:[UIImage imageNamed:([self.backgroundColor isLight] ? @"mContacts_ArrowLight.png" : @"mContacts_Arrow.png")]];
   
   return cell;
 }
@@ -522,7 +666,7 @@ downloadIndicator;
     link = [arrElement objectForKey:@"url"];
   
   
-  mWebVCViewController *webVC = [[[mWebVCViewController alloc] initWithNibName:nil bundle:nil] autorelease];
+  mWebVCViewController *webVC = [[mWebVCViewController alloc] initWithNibName:nil bundle:nil];
   
   if (isRSSFeed)
   {
@@ -553,6 +697,7 @@ downloadIndicator;
     
     if ([link rangeOfString:@"goo.gl"].location != NSNotFound)
     {
+        // task_id=2562
       webVC.URL = link;
     }
     else if ([[[link pathExtension] lowercaseString] isEqualToString:@"pdf"])
@@ -564,22 +709,22 @@ downloadIndicator;
     
     else
     {
+        // 0000794: iPhone: chiness symbols in Coupons widget
+        // show content with UTF8 encoding! )
       NSData *data = [NSData dataWithContentsOfURL:[NSURL URLWithString:link]];
       NSString *str = [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding];
       
       if (str && str.length)
       {
-        webVC.content = [[str copy] autorelease];
+        webVC.content = [str copy];
       }
       else
       {
         webVC.URL = link;
       }
       
-      [str release];
     }
   }
-  webVC.showTabBar         = NO;   // hide tabBar
   webVC.withoutTBar        = YES;
   webVC.showTBarOnNextStep = YES;
   webVC.title = [functionLibrary stringByReplaceEntitiesInString:[[arr objectAtIndex:indexPath.row] objectForKey:@"title"]];
@@ -590,7 +735,7 @@ downloadIndicator;
 - (UITableViewCell *) getCellContentView:(NSString *)cellIdentifier
 {
   
-  UITableViewCell *cell = [[[UITableViewCell alloc] initWithStyle:UITableViewCellStyleDefault reuseIdentifier:cellIdentifier] autorelease];
+  UITableViewCell *cell = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleDefault reuseIdentifier:cellIdentifier];
   
   if ([cell respondsToSelector:@selector(setLayoutMargins:)])
   {
@@ -599,20 +744,23 @@ downloadIndicator;
   }
   
   cell.backgroundColor = [UIColor clearColor];
-    
-  UIView *backgroungView = [[[UIView alloc] initWithFrame:cell.frame] autorelease];
+  
+    //  [cell setBackgroundView:nil];
+    //  [cell setBackgroundColor:self.backgroundColor];
+  
+  UIView *backgroungView = [[UIView alloc] initWithFrame:cell.frame];
   backgroungView.backgroundColor = self.backgroundColor;
   cell.backgroundView = backgroungView;
 	
 	UILabel *lblTemp = [[UILabel alloc] init];
 	lblTemp.tag = 1;
+    //	lblTemp.textColor = [UIColor blackColor];
 	lblTemp.numberOfLines = 2;
 	lblTemp.font = [UIFont boldSystemFontOfSize:15];
   if (self.titleColor)
     lblTemp.textColor = self.titleColor;
 	lblTemp.backgroundColor = [UIColor clearColor];
 	[cell.contentView addSubview:lblTemp];
-	[lblTemp release];
 	
 	lblTemp = [[UILabel alloc] init];
 	lblTemp.tag = 2;
@@ -622,16 +770,15 @@ downloadIndicator;
     lblTemp.textColor = self.txtColor;
 	lblTemp.backgroundColor = [UIColor clearColor];
 	[cell.contentView addSubview:lblTemp];
-	[lblTemp release];
 	
 	UILabel *descr = [[UILabel alloc] init];
 	descr.tag = 4;
+    //	descr.textColor = [UIColor grayColor];
 	descr.font = [UIFont systemFontOfSize:13];
   descr.textColor = self.txtColor;
 	descr.backgroundColor = [UIColor clearColor];
 	descr.numberOfLines = 2;
 	[cell.contentView addSubview:descr];
-	[descr release];
 	
 	UIImageView *img = [[UIImageView alloc] initWithFrame:CGRectMake(8, 8, 60, 60)];
   [img setClipsToBounds:YES];
@@ -641,7 +788,6 @@ downloadIndicator;
 	img.tag = 555;
 	[cell.contentView addSubview:img];
 	[img setHidden:true];
-	[img release];
 	
 	return cell;
 }
@@ -654,25 +800,19 @@ downloadIndicator;
 {
   [self.downloadIndicator removeFromSuperview];
   self.downloadIndicator = nil;
-  NSError *error = nil;
-  TBXML *xmlDocument = [[[TBXML alloc] initWithXMLData:data error:&error] autorelease];
-  if ( !error )
-  {
-    [self traverseElement:xmlDocument.rootXMLElement];
-    [self.tblView setSeparatorStyle:UITableViewCellSeparatorStyleSingleLine];
-    [self.tblView reloadData];
-  }
+  
+  [self parseXMLWithData:data];
 }
 
 - (void)loaderConnection:(NSURLConnection *)connection
         didFailWithError:(NSError *)error
             andURLloader:(TURLLoader *)urlLoader
 {
-  UIAlertView *message = [[[UIAlertView alloc] initWithTitle:NSLocalizedString(@"mC_errorLoadingRSSAlertTitle", @"error loading")// @"error loading"
+  UIAlertView *message = [[UIAlertView alloc] initWithTitle:NSLocalizedString(@"mC_errorLoadingRSSAlertTitle", @"error loading")// @"error loading"
                                                      message:NSLocalizedString(@"mC_errorLoadingRSSAlertMessage", @"can't download rss feed")//@"can't download rss feed"
                                                     delegate:self
                                            cancelButtonTitle:NSLocalizedString(@"mC_errorLoadingRSSAlertOkButton", @"OK")//@"OK"
-                                           otherButtonTitles:nil] autorelease];
+                                           otherButtonTitles:nil];
   [message show];
   [self.downloadIndicator removeFromSuperview];
   self.downloadIndicator = nil;
@@ -690,7 +830,7 @@ downloadIndicator;
   return YES;
 }
 
-- (NSUInteger)supportedInterfaceOrientations
+- (UIInterfaceOrientationMask)supportedInterfaceOrientations
 {
   return UIInterfaceOrientationMaskPortrait |
   UIInterfaceOrientationMaskPortraitUpsideDown;
